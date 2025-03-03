@@ -21,12 +21,12 @@
  * This allows for a more bindless design
  */
 
-#include "descriptor_buffer_basic.h"
+#include "descriptor_buffer_basic_old.h"
 
 #include "core/buffer.h"
 #include "scene_graph/components/sub_mesh.h"
 
-DescriptorBufferBasic::DescriptorBufferBasic()
+DescriptorBufferBasicOld::DescriptorBufferBasicOld()
 {
 	title = "Descriptor buffers";
 
@@ -40,14 +40,14 @@ DescriptorBufferBasic::DescriptorBufferBasic()
 	add_device_extension(VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME);
 }
 
-DescriptorBufferBasic::~DescriptorBufferBasic()
+DescriptorBufferBasicOld::~DescriptorBufferBasicOld()
 {
 	if (has_device())
 	{
 		vkDestroyPipeline(get_device().get_handle(), pipeline, nullptr);
 		vkDestroyPipelineLayout(get_device().get_handle(), pipeline_layout, nullptr);
-		vkDestroyDescriptorSetLayout(get_device().get_handle(), resource_binding_descriptor.layout, nullptr);
-		vkDestroyDescriptorSetLayout(get_device().get_handle(), sampler_binding_descriptor.layout, nullptr);
+		vkDestroyDescriptorSetLayout(get_device().get_handle(), uniform_binding_descriptor.layout, nullptr);
+		vkDestroyDescriptorSetLayout(get_device().get_handle(), image_binding_descriptor.layout, nullptr);
 		for (auto &cube : cubes)
 		{
 			cube.uniform_buffer.reset();
@@ -55,12 +55,12 @@ DescriptorBufferBasic::~DescriptorBufferBasic()
 			vkDestroySampler(get_device().get_handle(), cube.texture.sampler, nullptr);
 		}
 		uniform_buffers.scene.reset();
-		resource_binding_descriptor.buffer.reset();
-		sampler_binding_descriptor.buffer.reset();
+		uniform_binding_descriptor.buffer.reset();
+		image_binding_descriptor.buffer.reset();
 	}
 }
 
-void DescriptorBufferBasic::request_gpu_features(vkb::PhysicalDevice &gpu)
+void DescriptorBufferBasicOld::request_gpu_features(vkb::PhysicalDevice &gpu)
 {
 	// Enable anisotropic filtering if supported
 	if (gpu.get_features().samplerAnisotropy)
@@ -83,7 +83,7 @@ void DescriptorBufferBasic::request_gpu_features(vkb::PhysicalDevice &gpu)
 	                         descriptorBuffer);
 }
 
-void DescriptorBufferBasic::build_command_buffers()
+void DescriptorBufferBasicOld::build_command_buffers()
 {
 	VkCommandBufferBeginInfo command_buffer_begin_info = vkb::initializers::command_buffer_begin_info();
 
@@ -127,33 +127,31 @@ void DescriptorBufferBasic::build_command_buffers()
 		// Binding 0 = uniform buffer
 		VkDescriptorBufferBindingInfoEXT descriptor_buffer_binding_info[2]{};
 		descriptor_buffer_binding_info[0].sType   = VK_STRUCTURE_TYPE_DESCRIPTOR_BUFFER_BINDING_INFO_EXT;
-		descriptor_buffer_binding_info[0].address = resource_binding_descriptor.buffer->get_device_address();
+		descriptor_buffer_binding_info[0].address = uniform_binding_descriptor.buffer->get_device_address();
 		descriptor_buffer_binding_info[0].usage   = VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT;
 		// Binding 1 = Image
 		descriptor_buffer_binding_info[1].sType   = VK_STRUCTURE_TYPE_DESCRIPTOR_BUFFER_BINDING_INFO_EXT;
-		descriptor_buffer_binding_info[1].address = sampler_binding_descriptor.buffer->get_device_address();
-		descriptor_buffer_binding_info[1].usage   = VK_BUFFER_USAGE_SAMPLER_DESCRIPTOR_BUFFER_BIT_EXT;
+		descriptor_buffer_binding_info[1].address = image_binding_descriptor.buffer->get_device_address();
+		descriptor_buffer_binding_info[1].usage   = VK_BUFFER_USAGE_SAMPLER_DESCRIPTOR_BUFFER_BIT_EXT | VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT;
 		vkCmdBindDescriptorBuffersEXT(draw_cmd_buffers[i], 2, descriptor_buffer_binding_info);
 
-		uint32_t     buffer_index_ubo     = 0;
-		uint32_t     buffer_index_sampler = 1;
-
-		VkDeviceSize resource_buffer_offset = 0;
-		VkDeviceSize sampler_buffer_offset  = 0;
+		uint32_t     buffer_index_ubo   = 0;
+		uint32_t     buffer_index_image = 1;
+		VkDeviceSize buffer_offset      = 0;
 
 		// Global Matrices (set 0)
-		vkCmdSetDescriptorBufferOffsetsEXT(draw_cmd_buffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &buffer_index_ubo, &resource_buffer_offset);
-		resource_buffer_offset += resource_binding_descriptor.size;
+		vkCmdSetDescriptorBufferOffsetsEXT(draw_cmd_buffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &buffer_index_ubo, &buffer_offset);
 
 		// Set an offset into descriptor for each model
 		for (size_t j = 0; j < cubes.size(); j++)
 		{
-			vkCmdSetDescriptorBufferOffsetsEXT(draw_cmd_buffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 1, 1, &buffer_index_ubo, &resource_buffer_offset);
-			resource_buffer_offset += resource_binding_descriptor.size;
-			vkCmdSetDescriptorBufferOffsetsEXT(draw_cmd_buffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, 1, &buffer_index_sampler, &sampler_buffer_offset);
-			sampler_buffer_offset += sampler_binding_descriptor.size;
-			vkCmdSetDescriptorBufferOffsetsEXT(draw_cmd_buffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 3, 1, &buffer_index_ubo, &resource_buffer_offset);
-			resource_buffer_offset += image_binding_descriptor.size;
+			// Uniform buffer (set 1)
+			// Model ubos start at offset * (j + 1) (+1 as slot 0 is global matrices)
+			buffer_offset = (j + 1) * uniform_binding_descriptor.size;
+			vkCmdSetDescriptorBufferOffsetsEXT(draw_cmd_buffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 1, 1, &buffer_index_ubo, &buffer_offset);
+			// Image (set 2)
+			buffer_offset = j * image_binding_descriptor.size;
+			vkCmdSetDescriptorBufferOffsetsEXT(draw_cmd_buffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 2, 1, &buffer_index_image, &buffer_offset);
 			draw_model(models.cube, draw_cmd_buffers[i]);
 		}
 
@@ -165,7 +163,7 @@ void DescriptorBufferBasic::build_command_buffers()
 	}
 }
 
-void DescriptorBufferBasic::load_assets()
+void DescriptorBufferBasicOld::load_assets()
 {
 	models.cube      = load_model("scenes/textured_unit_cube.gltf");
 	cubes[0].texture = load_texture("textures/crate01_color_height_rgba.ktx", vkb::sg::Image::Color);
@@ -177,7 +175,7 @@ inline VkDeviceSize aligned_size(VkDeviceSize value, VkDeviceSize alignment)
 	return (value + alignment - 1) & ~(alignment - 1);
 }
 
-void DescriptorBufferBasic::setup_descriptor_set_layout()
+void DescriptorBufferBasicOld::setup_descriptor_set_layout()
 {
 	// Using descriptor buffers still requires the creation of descriptor set layouts
 
@@ -191,39 +189,32 @@ void DescriptorBufferBasic::setup_descriptor_set_layout()
 
 	// Create a layout for uniform buffers
 	set_layout_binding = vkb::initializers::descriptor_set_layout_binding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 0);
-	VK_CHECK(vkCreateDescriptorSetLayout(get_device().get_handle(), &descriptor_layout_create_info, nullptr, &resource_binding_descriptor.layout));
+	VK_CHECK(vkCreateDescriptorSetLayout(get_device().get_handle(), &descriptor_layout_create_info, nullptr, &uniform_binding_descriptor.layout));
 
-	// Create a layout for sampler
-	set_layout_binding = vkb::initializers::descriptor_set_layout_binding(VK_DESCRIPTOR_TYPE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 0);
-	VK_CHECK(vkCreateDescriptorSetLayout(get_device().get_handle(), &descriptor_layout_create_info, nullptr, &sampler_binding_descriptor.layout));
-
-	// Create a layout for image
-	set_layout_binding = vkb::initializers::descriptor_set_layout_binding(VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VK_SHADER_STAGE_FRAGMENT_BIT, 0);
+	// Create a layout for combined image samplers
+	set_layout_binding = vkb::initializers::descriptor_set_layout_binding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 0);
 	VK_CHECK(vkCreateDescriptorSetLayout(get_device().get_handle(), &descriptor_layout_create_info, nullptr, &image_binding_descriptor.layout));
 
-	// Create a pipeline layout using set 0 = Camera UBO, set 1 = Model UBO, set 2 = sampler, and set 3 = image
-	const std::array<VkDescriptorSetLayout, 4> descriptor_set_layouts = {resource_binding_descriptor.layout, resource_binding_descriptor.layout, sampler_binding_descriptor.layout, image_binding_descriptor.layout};
+	// Create a pipeline layout using set 0 = Camera UBO, set 1 = Model UBO and set 2 = Model combined image
+	const std::array<VkDescriptorSetLayout, 3> descriptor_set_layouts = {uniform_binding_descriptor.layout, uniform_binding_descriptor.layout, image_binding_descriptor.layout};
 
 	VkPipelineLayoutCreateInfo pipeline_layout_create_info = vkb::initializers::pipeline_layout_create_info(descriptor_set_layouts.data(), static_cast<uint32_t>(descriptor_set_layouts.size()));
 	VK_CHECK(vkCreatePipelineLayout(get_device().get_handle(), &pipeline_layout_create_info, nullptr, &pipeline_layout));
 
 	// Get set layout descriptor sizes.
-	vkGetDescriptorSetLayoutSizeEXT(get_device().get_handle(), resource_binding_descriptor.layout, &resource_binding_descriptor.size);
-	vkGetDescriptorSetLayoutSizeEXT(get_device().get_handle(), sampler_binding_descriptor.layout, &sampler_binding_descriptor.size);
+	vkGetDescriptorSetLayoutSizeEXT(get_device().get_handle(), uniform_binding_descriptor.layout, &uniform_binding_descriptor.size);
 	vkGetDescriptorSetLayoutSizeEXT(get_device().get_handle(), image_binding_descriptor.layout, &image_binding_descriptor.size);
 
 	// Adjust set layout sizes to alignment.
-	resource_binding_descriptor.size = aligned_size(resource_binding_descriptor.size, descriptor_buffer_properties.descriptorBufferOffsetAlignment);
-	sampler_binding_descriptor.size = aligned_size(sampler_binding_descriptor.size, descriptor_buffer_properties.descriptorBufferOffsetAlignment);
+	uniform_binding_descriptor.size = aligned_size(uniform_binding_descriptor.size, descriptor_buffer_properties.descriptorBufferOffsetAlignment);
 	image_binding_descriptor.size   = aligned_size(image_binding_descriptor.size, descriptor_buffer_properties.descriptorBufferOffsetAlignment);
 
 	// Get descriptor bindings offsets as descriptors are placed inside set layout by those offsets.
-	vkGetDescriptorSetLayoutBindingOffsetEXT(get_device().get_handle(), resource_binding_descriptor.layout, 0u, &resource_binding_descriptor.offset);
-	vkGetDescriptorSetLayoutBindingOffsetEXT(get_device().get_handle(), sampler_binding_descriptor.layout, 0u, &sampler_binding_descriptor.offset);
+	vkGetDescriptorSetLayoutBindingOffsetEXT(get_device().get_handle(), uniform_binding_descriptor.layout, 0u, &uniform_binding_descriptor.offset);
 	vkGetDescriptorSetLayoutBindingOffsetEXT(get_device().get_handle(), image_binding_descriptor.layout, 0u, &image_binding_descriptor.offset);
 }
 
-void DescriptorBufferBasic::prepare_pipelines()
+void DescriptorBufferBasicOld::prepare_pipelines()
 {
 	VkPipelineInputAssemblyStateCreateInfo input_assembly_state =
 	    vkb::initializers::pipeline_input_assembly_state_create_info(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, 0, VK_FALSE);
@@ -281,8 +272,8 @@ void DescriptorBufferBasic::prepare_pipelines()
 	pipeline_create_info.flags = VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
 
 	const std::array<VkPipelineShaderStageCreateInfo, 2> shader_stages = {
-	    load_shader("descriptor_buffer_basic_intel", "cube.vert", VK_SHADER_STAGE_VERTEX_BIT),
-	    load_shader("descriptor_buffer_basic_intel", "cube.frag", VK_SHADER_STAGE_FRAGMENT_BIT)};
+	    load_shader("descriptor_buffer_basic", "cube.vert", VK_SHADER_STAGE_VERTEX_BIT),
+	    load_shader("descriptor_buffer_basic", "cube.frag", VK_SHADER_STAGE_FRAGMENT_BIT)};
 
 	pipeline_create_info.stageCount = static_cast<uint32_t>(shader_stages.size());
 	pipeline_create_info.pStages    = shader_stages.data();
@@ -291,65 +282,72 @@ void DescriptorBufferBasic::prepare_pipelines()
 }
 
 // This function creates the descriptor buffers and puts the descriptors into those buffers, so they can be used during command buffer creation
-void DescriptorBufferBasic::prepare_descriptor_buffer()
+void DescriptorBufferBasicOld::prepare_descriptor_buffer()
 {
 	// This buffer will contain resource descriptors for all the uniform buffers (one per cube and one with global matrices)
-	resource_binding_descriptor.buffer = std::make_unique<vkb::core::BufferC>(get_device(),
-	                                                                         (static_cast<uint32_t>(cubes.size()) + 1) * resource_binding_descriptor.size + static_cast<uint32_t>(cubes.size()) * image_binding_descriptor.size,
+	uniform_binding_descriptor.buffer = std::make_unique<vkb::core::BufferC>(get_device(),
+	                                                                         (static_cast<uint32_t>(cubes.size()) + 1) * uniform_binding_descriptor.size,
 	                                                                         VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 	                                                                         VMA_MEMORY_USAGE_CPU_TO_GPU);
 
 	// Samplers and combined images need to be stored in a separate buffer due to different flags (VK_BUFFER_USAGE_SAMPLER_DESCRIPTOR_BUFFER_BIT_EXT) (one image per cube)
-	sampler_binding_descriptor.buffer = std::make_unique<vkb::core::BufferC>(get_device(),
-	                                                                       static_cast<uint32_t>(cubes.size()) * sampler_binding_descriptor.size,
-	                                                                       VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_SAMPLER_DESCRIPTOR_BUFFER_BIT_EXT,
+	image_binding_descriptor.buffer = std::make_unique<vkb::core::BufferC>(get_device(),
+	                                                                       static_cast<uint32_t>(cubes.size()) * image_binding_descriptor.size,
+	                                                                       VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT | VK_BUFFER_USAGE_SAMPLER_DESCRIPTOR_BUFFER_BIT_EXT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 	                                                                       VMA_MEMORY_USAGE_CPU_TO_GPU);
 
 	// Put the descriptors into the above buffers
 
 	// For combined images we need to put descriptors into the descriptor buffers
 	// We use pointers to offset and align the data we put into the descriptor buffers
-	char *resource_descriptor_buf_ptr = (char *) resource_binding_descriptor.buffer->get_data();
-	char *sampler_descriptor_buf_ptr = (char *) sampler_binding_descriptor.buffer->get_data();
+	char *image_descriptor_buf_ptr = (char *) image_binding_descriptor.buffer->get_data();
+	for (size_t i = 0; i < cubes.size(); i++)
+	{
+		VkDescriptorImageInfo image_descriptor = create_descriptor(cubes[i].texture);
+
+		VkDescriptorGetInfoEXT image_descriptor_info{VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT};
+		image_descriptor_info.type                       = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		image_descriptor_info.data.pCombinedImageSampler = &image_descriptor;
+
+		// Note: we can just write combined image sampler descriptors back-to-back in the buffer here
+		// regardless of whether descriptor_buffer_properties.combinedImageSamplerDescriptorSingleArray is true or
+		// false because these aren't an array of descriptors, just individual descriptors in the same buffer.
+		// If these were actually an array (descriptor count > 1) then we would have to check the
+		// combinedImageSamplerDescriptorSingleArray property and separate the image descriptor part from the
+		// sampler descriptor part. We would place all the image descriptors first, followed by all the samplers.
+
+		vkGetDescriptorEXT(get_device().get_handle(), &image_descriptor_info, descriptor_buffer_properties.combinedImageSamplerDescriptorSize, image_descriptor_buf_ptr + i * image_binding_descriptor.size + image_binding_descriptor.offset);
+	}
+
+	// For uniform buffers we only need to put their buffer device addresses into the descriptor buffers
+	char *uniform_descriptor_buf_ptr = (char *) uniform_binding_descriptor.buffer->get_data();
 
 	// Global matrices uniform buffer
 	VkDescriptorAddressInfoEXT addr_info = {VK_STRUCTURE_TYPE_DESCRIPTOR_ADDRESS_INFO_EXT};
 	addr_info.address                    = uniform_buffers.scene->get_device_address();
 	addr_info.range                      = uniform_buffers.scene->get_size();
 	addr_info.format                     = VK_FORMAT_UNDEFINED;
+
 	VkDescriptorGetInfoEXT buffer_descriptor_info{VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT};
 	buffer_descriptor_info.type                = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
 	buffer_descriptor_info.data.pUniformBuffer = &addr_info;
-	vkGetDescriptorEXT(get_device().get_handle(), &buffer_descriptor_info, descriptor_buffer_properties.uniformBufferDescriptorSize, resource_descriptor_buf_ptr + resource_binding_descriptor.offset);
-	resource_descriptor_buf_ptr += resource_binding_descriptor.size;
+	vkGetDescriptorEXT(get_device().get_handle(), &buffer_descriptor_info, descriptor_buffer_properties.uniformBufferDescriptorSize, uniform_descriptor_buf_ptr);
 
+	// Per-cube uniform buffers
+	// We use pointers to offset and align the data we put into the descriptor buffers
 	for (size_t i = 0; i < cubes.size(); i++)
 	{
-		VkDescriptorImageInfo image_descriptor = create_descriptor(cubes[i].texture);
-
 		VkDescriptorAddressInfoEXT cube_addr_info = {VK_STRUCTURE_TYPE_DESCRIPTOR_ADDRESS_INFO_EXT};
 		cube_addr_info.address                    = cubes[i].uniform_buffer->get_device_address();
 		cube_addr_info.range                      = cubes[i].uniform_buffer->get_size();
 		cube_addr_info.format                     = VK_FORMAT_UNDEFINED;
+
 		buffer_descriptor_info.data.pUniformBuffer = &cube_addr_info;
-		vkGetDescriptorEXT(get_device().get_handle(), &buffer_descriptor_info, descriptor_buffer_properties.uniformBufferDescriptorSize, resource_descriptor_buf_ptr + resource_binding_descriptor.offset);
-		resource_descriptor_buf_ptr += resource_binding_descriptor.size;
-
-		VkDescriptorGetInfoEXT image_descriptor_info{VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT};
-		image_descriptor_info.type               = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-		image_descriptor_info.data.pSampledImage = &image_descriptor;
-		vkGetDescriptorEXT(get_device().get_handle(), &image_descriptor_info, descriptor_buffer_properties.sampledImageDescriptorSize, resource_descriptor_buf_ptr + image_binding_descriptor.offset);
-		resource_descriptor_buf_ptr += image_binding_descriptor.size;
-
-		VkDescriptorGetInfoEXT buffer_descriptor_info{VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT};
-		buffer_descriptor_info.type          = VK_DESCRIPTOR_TYPE_SAMPLER;
-		buffer_descriptor_info.data.pSampler = &image_descriptor.sampler;
-		vkGetDescriptorEXT(get_device().get_handle(), &buffer_descriptor_info, descriptor_buffer_properties.samplerDescriptorSize, sampler_descriptor_buf_ptr + sampler_binding_descriptor.offset);
-		sampler_descriptor_buf_ptr += sampler_binding_descriptor.size;
+		vkGetDescriptorEXT(get_device().get_handle(), &buffer_descriptor_info, descriptor_buffer_properties.uniformBufferDescriptorSize, uniform_descriptor_buf_ptr + (i + 1) * uniform_binding_descriptor.size + uniform_binding_descriptor.offset);
 	}
 }
 
-void DescriptorBufferBasic::prepare_uniform_buffers()
+void DescriptorBufferBasicOld::prepare_uniform_buffers()
 {
 	// Vertex shader scene uniform buffer block
 	uniform_buffers.scene = std::make_unique<vkb::core::BufferC>(get_device(),
@@ -370,14 +368,14 @@ void DescriptorBufferBasic::prepare_uniform_buffers()
 	update_cube_uniform_buffers(0.0f);
 }
 
-void DescriptorBufferBasic::update_uniform_buffers()
+void DescriptorBufferBasicOld::update_uniform_buffers()
 {
 	ubo_scene.projection = camera.matrices.perspective;
 	ubo_scene.view       = camera.matrices.view;
 	uniform_buffers.scene->convert_and_update(ubo_scene);
 }
 
-void DescriptorBufferBasic::update_cube_uniform_buffers(float delta_time)
+void DescriptorBufferBasicOld::update_cube_uniform_buffers(float delta_time)
 {
 	cubes[0].model_mat = glm::translate(glm::mat4(1.0f), glm::vec3(-2.0f, 0.0f, 0.0f));
 	cubes[1].model_mat = glm::translate(glm::mat4(1.0f), glm::vec3(1.5f, 0.5f, 0.0f));
@@ -405,7 +403,7 @@ void DescriptorBufferBasic::update_cube_uniform_buffers(float delta_time)
 	}
 }
 
-void DescriptorBufferBasic::draw()
+void DescriptorBufferBasicOld::draw()
 {
 	ApiVulkanSample::prepare_frame();
 	submit_info.commandBufferCount = 1;
@@ -414,7 +412,7 @@ void DescriptorBufferBasic::draw()
 	ApiVulkanSample::submit_frame();
 }
 
-bool DescriptorBufferBasic::prepare(const vkb::ApplicationOptions &options)
+bool DescriptorBufferBasicOld::prepare(const vkb::ApplicationOptions &options)
 {
 	if (!ApiVulkanSample::prepare(options))
 	{
@@ -430,6 +428,12 @@ bool DescriptorBufferBasic::prepare(const vkb::ApplicationOptions &options)
 	device_properties.sType            = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2_KHR;
 	device_properties.pNext            = &descriptor_buffer_properties;
 	vkGetPhysicalDeviceProperties2KHR(get_device().get_gpu().get_handle(), &device_properties);
+
+	if (descriptor_buffer_properties.maxResourceDescriptorBufferBindings < 2)
+	{
+		LOGE("VkPhysicalDeviceDescriptorBufferPropertiesEXT.maxResourceDescriptorBufferBindings={}. Sample requires at least 2 to run.", descriptor_buffer_properties.maxResourceDescriptorBufferBindings);
+		return false;
+	}
 
 	/*
 	    End of extension specific functions
@@ -451,7 +455,7 @@ bool DescriptorBufferBasic::prepare(const vkb::ApplicationOptions &options)
 	return true;
 }
 
-void DescriptorBufferBasic::render(float delta_time)
+void DescriptorBufferBasicOld::render(float delta_time)
 {
 	if (!prepared)
 	{
@@ -468,7 +472,7 @@ void DescriptorBufferBasic::render(float delta_time)
 	}
 }
 
-void DescriptorBufferBasic::on_update_ui_overlay(vkb::Drawer &drawer)
+void DescriptorBufferBasicOld::on_update_ui_overlay(vkb::Drawer &drawer)
 {
 	if (drawer.header("Settings"))
 	{
@@ -476,7 +480,7 @@ void DescriptorBufferBasic::on_update_ui_overlay(vkb::Drawer &drawer)
 	}
 }
 
-std::unique_ptr<vkb::VulkanSampleC> create_descriptor_buffer_basic()
+std::unique_ptr<vkb::VulkanSampleC> create_descriptor_buffer_basic_old()
 {
-	return std::make_unique<DescriptorBufferBasic>();
+	return std::make_unique<DescriptorBufferBasicOld>();
 }

@@ -25,7 +25,7 @@
 
 #include "api_vulkan_sample.h"
 
-class DescriptorBufferBasic : public ApiVulkanSample
+class DescriptorBufferBasicOld : public ApiVulkanSample
 {
   public:
 	bool animate = true;
@@ -39,9 +39,8 @@ class DescriptorBufferBasic : public ApiVulkanSample
 		VkDeviceSize                        size;
 		VkDeviceSize                        offset;
 	};
-	DescriptorData resource_binding_descriptor;
+	DescriptorData uniform_binding_descriptor;
 	DescriptorData image_binding_descriptor;
-	DescriptorData sampler_binding_descriptor;
 
 	struct Cube
 	{
@@ -71,8 +70,8 @@ class DescriptorBufferBasic : public ApiVulkanSample
 	VkPipeline       pipeline{VK_NULL_HANDLE};
 	VkPipelineLayout pipeline_layout{VK_NULL_HANDLE};
 
-	DescriptorBufferBasic();
-	~DescriptorBufferBasic() override;
+	DescriptorBufferBasicOld();
+	~DescriptorBufferBasicOld() override;
 	virtual void request_gpu_features(vkb::PhysicalDevice &gpu) override;
 	void         build_command_buffers() override;
 	void         load_assets();
@@ -88,4 +87,4 @@ class DescriptorBufferBasic : public ApiVulkanSample
 	void         on_update_ui_overlay(vkb::Drawer &drawer) override;
 };
 
-std::unique_ptr<vkb::VulkanSampleC> create_descriptor_buffer_basic();
+std::unique_ptr<vkb::VulkanSampleC> create_descriptor_buffer_basic_old();
